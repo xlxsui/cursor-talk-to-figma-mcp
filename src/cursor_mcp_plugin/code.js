@@ -241,6 +241,16 @@ async function handleCommand(command, params) {
       return await scanExportNodes(params);
     case "export_node_with_settings":
       return await exportNodeWithSettings(params);
+    case "rename_node":
+      return await renameNode(params);
+    case "clone_to_parent":
+      return await cloneToParent(params);
+    case "set_visibility":
+      return await setVisibility(params);
+    case "set_opacity":
+      return await setOpacity(params);
+    case "reparent_node":
+      return await reparentNode(params);
     default:
       throw new Error(`Unknown command: ${command}`);
   }
@@ -4203,5 +4213,145 @@ async function setSelections(params) {
     selectedNodes: selectedNodes,
     notFoundIds: notFoundIds,
     message: `Selected ${nodes.length} nodes${notFoundIds.length > 0 ? ` (${notFoundIds.length} not found)` : ''}`
+  };
+}
+
+// ============================================================
+// 新增功能：rename_node / clone_to_parent / set_visibility / set_opacity / reparent_node
+// ============================================================
+
+async function renameNode(params) {
+  const { nodeId, name } = params || {};
+  if (!nodeId) throw new Error("Missing nodeId parameter");
+  if (name === undefined || name === null) throw new Error("Missing name parameter");
+
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node) throw new Error(`Node not found with ID: ${nodeId}`);
+
+  const oldName = node.name;
+  node.name = String(name);
+
+  if (node.type === "TEXT" && "autoRename" in node) {
+    node.autoRename = false;
+  }
+
+  return {
+    id: node.id,
+    oldName,
+    newName: node.name,
+    type: node.type,
+  };
+}
+
+async function cloneToParent(params) {
+  const { nodeId, parentId, x, y } = params || {};
+  if (!nodeId) throw new Error("Missing nodeId parameter");
+  if (!parentId) throw new Error("Missing parentId parameter");
+
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node) throw new Error(`Node not found with ID: ${nodeId}`);
+
+  const parentNode = await figma.getNodeByIdAsync(parentId);
+  if (!parentNode) throw new Error(`Parent node not found with ID: ${parentId}`);
+
+  if (!("appendChild" in parentNode)) {
+    throw new Error(`Parent node (${parentNode.type}) does not support children`);
+  }
+
+  const clone = node.clone();
+  parentNode.appendChild(clone);
+
+  if (x !== undefined && y !== undefined && "x" in clone && "y" in clone) {
+    clone.x = x;
+    clone.y = y;
+  }
+
+  return {
+    id: clone.id,
+    name: clone.name,
+    parentId: parentNode.id,
+    parentName: parentNode.name,
+    x: "x" in clone ? clone.x : undefined,
+    y: "y" in clone ? clone.y : undefined,
+    width: "width" in clone ? clone.width : undefined,
+    height: "height" in clone ? clone.height : undefined,
+  };
+}
+
+async function setVisibility(params) {
+  const { nodeId, visible } = params || {};
+  if (!nodeId) throw new Error("Missing nodeId parameter");
+  if (visible === undefined) throw new Error("Missing visible parameter");
+
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node) throw new Error(`Node not found with ID: ${nodeId}`);
+
+  if (!("visible" in node)) {
+    throw new Error(`Node type ${node.type} does not support visibility`);
+  }
+
+  node.visible = Boolean(visible);
+
+  return {
+    id: node.id,
+    name: node.name,
+    visible: node.visible,
+  };
+}
+
+async function setOpacity(params) {
+  const { nodeId, opacity } = params || {};
+  if (!nodeId) throw new Error("Missing nodeId parameter");
+  if (opacity === undefined) throw new Error("Missing opacity parameter");
+
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node) throw new Error(`Node not found with ID: ${nodeId}`);
+
+  if (!("opacity" in node)) {
+    throw new Error(`Node type ${node.type} does not support opacity`);
+  }
+
+  const clampedOpacity = Math.max(0, Math.min(1, Number(opacity)));
+  node.opacity = clampedOpacity;
+
+  return {
+    id: node.id,
+    name: node.name,
+    opacity: node.opacity,
+  };
+}
+
+async function reparentNode(params) {
+  const { nodeId, newParentId, index } = params || {};
+  if (!nodeId) throw new Error("Missing nodeId parameter");
+  if (!newParentId) throw new Error("Missing newParentId parameter");
+
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node) throw new Error(`Node not found with ID: ${nodeId}`);
+
+  const newParent = await figma.getNodeByIdAsync(newParentId);
+  if (!newParent) throw new Error(`New parent not found with ID: ${newParentId}`);
+
+  if (!("appendChild" in newParent)) {
+    throw new Error(`New parent (${newParent.type}) does not support children`);
+  }
+
+  const oldParentName = node.parent ? node.parent.name : "none";
+
+  if (index !== undefined && "insertChild" in newParent) {
+    const clampedIndex = Math.max(0, Math.min(newParent.children.length, index));
+    newParent.insertChild(clampedIndex, node);
+  } else {
+    newParent.appendChild(node);
+  }
+
+  return {
+    id: node.id,
+    name: node.name,
+    oldParent: oldParentName,
+    newParentId: newParent.id,
+    newParentName: newParent.name,
+    x: "x" in node ? node.x : undefined,
+    y: "y" in node ? node.y : undefined,
   };
 }

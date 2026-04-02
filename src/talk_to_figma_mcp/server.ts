@@ -772,6 +772,174 @@ server.tool(
   }
 );
 
+// Rename Node Tool
+server.tool(
+  "rename_node",
+  "Rename a node in Figma (supports all node types including Group)",
+  {
+    nodeId: z.string().describe("The ID of the node to rename"),
+    name: z.string().describe("The new name for the node"),
+  },
+  async ({ nodeId, name }: any) => {
+    try {
+      const result = await sendCommandToFigma("rename_node", { nodeId, name });
+      const typedResult = result as { oldName: string; newName: string; type: string };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Renamed node from "${typedResult.oldName}" to "${typedResult.newName}" (type: ${typedResult.type})`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error renaming node: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Clone To Parent Tool
+server.tool(
+  "clone_to_parent",
+  "Clone a node and place the clone inside a specified parent node",
+  {
+    nodeId: z.string().describe("The ID of the node to clone"),
+    parentId: z.string().describe("The ID of the parent node to place the clone in"),
+    x: z.number().optional().describe("X position within the new parent"),
+    y: z.number().optional().describe("Y position within the new parent"),
+  },
+  async ({ nodeId, parentId, x, y }: any) => {
+    try {
+      const result = await sendCommandToFigma("clone_to_parent", { nodeId, parentId, x, y });
+      const typedResult = result as { id: string; name: string; parentName: string };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Cloned node "${typedResult.name}" (ID: ${typedResult.id}) into parent "${typedResult.parentName}"`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error cloning to parent: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Set Visibility Tool
+server.tool(
+  "set_visibility",
+  "Show or hide a node in Figma",
+  {
+    nodeId: z.string().describe("The ID of the node"),
+    visible: z.boolean().describe("true to show, false to hide"),
+  },
+  async ({ nodeId, visible }: any) => {
+    try {
+      const result = await sendCommandToFigma("set_visibility", { nodeId, visible });
+      const typedResult = result as { name: string; visible: boolean };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Set visibility of "${typedResult.name}" to ${typedResult.visible ? "visible" : "hidden"}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting visibility: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Set Opacity Tool
+server.tool(
+  "set_opacity",
+  "Set the opacity of a node in Figma (0 = fully transparent, 1 = fully opaque)",
+  {
+    nodeId: z.string().describe("The ID of the node"),
+    opacity: z.number().min(0).max(1).describe("Opacity value (0-1)"),
+  },
+  async ({ nodeId, opacity }: any) => {
+    try {
+      const result = await sendCommandToFigma("set_opacity", { nodeId, opacity });
+      const typedResult = result as { name: string; opacity: number };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Set opacity of "${typedResult.name}" to ${typedResult.opacity}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting opacity: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Reparent Node Tool
+server.tool(
+  "reparent_node",
+  "Move a node to a different parent node in Figma (changes the layer hierarchy)",
+  {
+    nodeId: z.string().describe("The ID of the node to move"),
+    newParentId: z.string().describe("The ID of the new parent node"),
+    index: z.number().int().min(0).optional().describe("Optional index position within the new parent's children"),
+  },
+  async ({ nodeId, newParentId, index }: any) => {
+    try {
+      const result = await sendCommandToFigma("reparent_node", { nodeId, newParentId, index });
+      const typedResult = result as { name: string; oldParent: string; newParentName: string };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Moved "${typedResult.name}" from "${typedResult.oldParent}" to "${typedResult.newParentName}"`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error reparenting node: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
 // Resize Node Tool
 server.tool(
   "resize_node",
@@ -2971,7 +3139,12 @@ type FigmaCommand =
   | "set_focus"
   | "set_selections"
   | "scan_export_nodes"
-  | "export_node_with_settings";
+  | "export_node_with_settings"
+  | "rename_node"
+  | "clone_to_parent"
+  | "set_visibility"
+  | "set_opacity"
+  | "reparent_node";
 
 type CommandParams = {
   get_document_info: Record<string, never>;
@@ -3130,6 +3303,29 @@ type CommandParams = {
     suffix?: string;
     constraint?: { type: string; value: number };
     contentsOnly?: boolean;
+  };
+  rename_node: {
+    nodeId: string;
+    name: string;
+  };
+  clone_to_parent: {
+    nodeId: string;
+    parentId: string;
+    x?: number;
+    y?: number;
+  };
+  set_visibility: {
+    nodeId: string;
+    visible: boolean;
+  };
+  set_opacity: {
+    nodeId: string;
+    opacity: number;
+  };
+  reparent_node: {
+    nodeId: string;
+    newParentId: string;
+    index?: number;
   };
 
 };
