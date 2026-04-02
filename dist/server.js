@@ -6,6 +6,25 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import WebSocket from "ws";
 import { v4 as uuidv4 } from "uuid";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
+var DEFAULT_ALLOWED_DIRS = [
+  os.homedir(),
+  path.join(os.homedir(), "Downloads"),
+  path.join(os.homedir(), "Desktop")
+];
+function getAllowedExportDirs() {
+  const envDirs = process.env.FIGMA_EXPORT_ALLOWED_DIRS;
+  if (envDirs) {
+    return envDirs.split(",").map((d) => path.resolve(d.trim())).filter(Boolean);
+  }
+  return DEFAULT_ALLOWED_DIRS;
+}
+function isPathAllowed(targetPath) {
+  const resolved = path.resolve(targetPath);
+  return getAllowedExportDirs().some((dir) => resolved.startsWith(dir + path.sep) || resolved === dir);
+}
 var logger = {
   info: (message) => process.stderr.write(`[INFO] ${message}
 `),
@@ -582,6 +601,164 @@ server.tool(
   }
 );
 server.tool(
+  "rename_node",
+  "Rename a node in Figma (supports all node types including Group)",
+  {
+    nodeId: z.string().describe("The ID of the node to rename"),
+    name: z.string().describe("The new name for the node")
+  },
+  async ({ nodeId, name }) => {
+    try {
+      const result = await sendCommandToFigma("rename_node", { nodeId, name });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Renamed node from "${typedResult.oldName}" to "${typedResult.newName}" (type: ${typedResult.type})`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error renaming node: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "clone_to_parent",
+  "Clone a node and place the clone inside a specified parent node",
+  {
+    nodeId: z.string().describe("The ID of the node to clone"),
+    parentId: z.string().describe("The ID of the parent node to place the clone in"),
+    x: z.number().optional().describe("X position within the new parent"),
+    y: z.number().optional().describe("Y position within the new parent")
+  },
+  async ({ nodeId, parentId, x, y }) => {
+    try {
+      const result = await sendCommandToFigma("clone_to_parent", { nodeId, parentId, x, y });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Cloned node "${typedResult.name}" (ID: ${typedResult.id}) into parent "${typedResult.parentName}"`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error cloning to parent: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "set_visibility",
+  "Show or hide a node in Figma",
+  {
+    nodeId: z.string().describe("The ID of the node"),
+    visible: z.boolean().describe("true to show, false to hide")
+  },
+  async ({ nodeId, visible }) => {
+    try {
+      const result = await sendCommandToFigma("set_visibility", { nodeId, visible });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Set visibility of "${typedResult.name}" to ${typedResult.visible ? "visible" : "hidden"}`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting visibility: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "set_opacity",
+  "Set the opacity of a node in Figma (0 = fully transparent, 1 = fully opaque)",
+  {
+    nodeId: z.string().describe("The ID of the node"),
+    opacity: z.number().min(0).max(1).describe("Opacity value (0-1)")
+  },
+  async ({ nodeId, opacity }) => {
+    try {
+      const result = await sendCommandToFigma("set_opacity", { nodeId, opacity });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Set opacity of "${typedResult.name}" to ${typedResult.opacity}`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting opacity: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "reparent_node",
+  "Move a node to a different parent node in Figma (changes the layer hierarchy)",
+  {
+    nodeId: z.string().describe("The ID of the node to move"),
+    newParentId: z.string().describe("The ID of the new parent node"),
+    index: z.number().int().min(0).optional().describe("Optional index position within the new parent's children")
+  },
+  async ({ nodeId, newParentId, index }) => {
+    try {
+      const result = await sendCommandToFigma("reparent_node", { nodeId, newParentId, index });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Moved "${typedResult.name}" from "${typedResult.oldParent}" to "${typedResult.newParentName}"`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error reparenting node: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
   "resize_node",
   "Resize a node in Figma",
   {
@@ -708,6 +885,223 @@ server.tool(
             text: `Error exporting node as image: ${error instanceof Error ? error.message : String(error)}`
           }
         ]
+      };
+    }
+  }
+);
+var exportNodeToFileSchema = {
+  nodeId: z.string().describe("The ID of the node to export"),
+  filePath: z.string().describe("Full local file path to save the exported image (e.g. ~/Downloads/icon.png). Path must be within the user's home directory. Override allowed directories via FIGMA_EXPORT_ALLOWED_DIRS env var."),
+  format: z.enum(["PNG", "JPG", "SVG", "PDF"]).optional().describe("Export format. Defaults to PNG."),
+  scale: z.number().positive().optional().describe("Export scale. Defaults to 1.")
+};
+server.tool(
+  "export_node_to_file",
+  "Export a single Figma node and save it to a local file with a custom filename. The output path must be within the user's home directory (configurable via FIGMA_EXPORT_ALLOWED_DIRS env var).",
+  exportNodeToFileSchema,
+  async ({ nodeId, filePath: destPath, format, scale }) => {
+    try {
+      const resolvedPath = path.resolve(destPath);
+      if (!isPathAllowed(resolvedPath)) {
+        return {
+          content: [{ type: "text", text: `Path not allowed: ${resolvedPath}. Exports must be within: ${getAllowedExportDirs().join(", ")}` }],
+          isError: true
+        };
+      }
+      const dir = path.dirname(resolvedPath);
+      await fs.promises.mkdir(dir, { recursive: true });
+      const result = await sendCommandToFigma(
+        "export_node_with_settings",
+        {
+          nodeId,
+          format: format || "PNG",
+          constraint: { type: "SCALE", value: scale || 1 }
+        },
+        6e4
+      );
+      const buffer = Buffer.from(result.imageData, "base64");
+      await fs.promises.writeFile(resolvedPath, buffer);
+      return {
+        content: [{ type: "text", text: `Exported to: ${resolvedPath} (${(buffer.length / 1024).toFixed(1)} KB)` }]
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Export failed: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true
+      };
+    }
+  }
+);
+server.tool(
+  "scan_export_nodes",
+  "Scan for nodes that have export settings configured in Figma. Returns a list of nodes with their export configurations (format, scale, suffix).",
+  {
+    scope: z.enum(["page", "selection"]).optional().describe("Scan scope: 'page' for entire current page, 'selection' for selected nodes only. Defaults to 'page'."),
+    nodeId: z.string().optional().describe("Optional: scan only within a specific node subtree")
+  },
+  async ({ scope, nodeId }) => {
+    try {
+      const result = await sendCommandToFigma("scan_export_nodes", {
+        scope: scope || "page",
+        nodeId
+      });
+      const lines = [
+        `Found ${result.count} nodes with export settings:`,
+        "",
+        ...result.nodes.map((n) => {
+          const settings = n.exportSettings.map((s) => `${s.format}${s.suffix ? ` (${s.suffix})` : ""} @${s.constraint?.value ?? 1}x`).join(", ");
+          return `  ${n.name} [${n.type}] (${n.nodeId}): ${settings}`;
+        })
+      ];
+      return {
+        content: [{ type: "text", text: lines.join("\n") }]
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error scanning export nodes: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true
+      };
+    }
+  }
+);
+server.tool(
+  "batch_export_nodes",
+  "Batch export nodes from Figma and save them to a local directory. The output path must be within the user's home directory (configurable via FIGMA_EXPORT_ALLOWED_DIRS env var).",
+  {
+    outputDir: z.string().describe("Local directory path to save exported images. Must be within the user's home directory."),
+    nodeIds: z.array(z.string()).optional().describe("Node IDs to export. If not provided, exports all nodes with export settings on the current page."),
+    format: z.enum(["PNG", "JPG", "SVG", "PDF"]).optional().describe("Override export format for all nodes. If not set, uses each node's configured export settings."),
+    scale: z.number().positive().optional().describe("Override export scale for all nodes. If not set, uses each node's configured constraint."),
+    scope: z.enum(["page", "selection"]).optional().describe("Scan scope when nodeIds is not provided. Defaults to 'page'.")
+  },
+  async ({ outputDir, nodeIds, format, scale, scope }) => {
+    try {
+      const resolvedDir = path.resolve(outputDir);
+      if (!isPathAllowed(resolvedDir)) {
+        return {
+          content: [{ type: "text", text: `Path not allowed: ${resolvedDir}. Exports must be within: ${getAllowedExportDirs().join(", ")}` }],
+          isError: true
+        };
+      }
+      await fs.promises.mkdir(resolvedDir, { recursive: true });
+      let nodesToExport = [];
+      if (nodeIds && nodeIds.length > 0) {
+        const nodesInfo = await sendCommandToFigma("get_nodes_info", { nodeIds });
+        const nodeNameMap = /* @__PURE__ */ new Map();
+        if (Array.isArray(nodesInfo)) {
+          for (const info of nodesInfo) {
+            if (info.nodeId && info.document?.name) {
+              nodeNameMap.set(info.nodeId, info.document.name);
+            }
+          }
+        }
+        nodesToExport = nodeIds.map((id) => ({
+          nodeId: id,
+          name: nodeNameMap.get(id) || id,
+          type: "UNKNOWN",
+          exportSettings: [
+            {
+              format: format || "PNG",
+              suffix: "",
+              constraint: { type: "SCALE", value: scale || 1 },
+              contentsOnly: true
+            }
+          ]
+        }));
+      } else {
+        const scanResult = await sendCommandToFigma("scan_export_nodes", {
+          scope: scope || "page"
+        });
+        if (!scanResult.nodes || scanResult.nodes.length === 0) {
+          return {
+            content: [{ type: "text", text: "No nodes with export settings found. Please add export settings to nodes in Figma first." }]
+          };
+        }
+        nodesToExport = scanResult.nodes;
+      }
+      if (format) {
+        nodesToExport = nodesToExport.map((node) => ({
+          ...node,
+          exportSettings: node.exportSettings.map((s) => ({
+            ...s,
+            format,
+            constraint: scale ? { type: "SCALE", value: scale } : s.constraint
+          }))
+        }));
+      } else if (scale) {
+        nodesToExport = nodesToExport.map((node) => ({
+          ...node,
+          exportSettings: node.exportSettings.map((s) => ({
+            ...s,
+            constraint: { type: "SCALE", value: scale }
+          }))
+        }));
+      }
+      const exportedFiles = [];
+      const errors = [];
+      const usedFileNames = /* @__PURE__ */ new Map();
+      let totalSettings = 0;
+      for (const node of nodesToExport) {
+        totalSettings += node.exportSettings.length;
+      }
+      let processed = 0;
+      for (const node of nodesToExport) {
+        for (const setting of node.exportSettings) {
+          try {
+            const result = await sendCommandToFigma(
+              "export_node_with_settings",
+              {
+                nodeId: node.nodeId,
+                format: setting.format,
+                suffix: setting.suffix,
+                constraint: setting.constraint,
+                contentsOnly: setting.contentsOnly
+              },
+              6e4
+            );
+            let finalFileName = result.fileName;
+            const count = usedFileNames.get(finalFileName) || 0;
+            if (count > 0) {
+              const ext = path.extname(finalFileName);
+              const base = path.basename(finalFileName, ext);
+              finalFileName = `${base}_${count}${ext}`;
+            }
+            usedFileNames.set(result.fileName, count + 1);
+            const filePath = path.join(resolvedDir, finalFileName);
+            const buffer = Buffer.from(result.imageData, "base64");
+            await fs.promises.writeFile(filePath, buffer);
+            exportedFiles.push(filePath);
+            processed++;
+            logger.info(
+              `Exported [${processed}/${totalSettings}]: ${result.fileName}`
+            );
+          } catch (err) {
+            processed++;
+            const errMsg = `Export failed for ${node.name} (${setting.format}${setting.suffix}): ${err instanceof Error ? err.message : String(err)}`;
+            errors.push(errMsg);
+            logger.error(errMsg);
+          }
+        }
+      }
+      const summary = [
+        `Batch export completed:`,
+        `  Succeeded: ${exportedFiles.length} files`,
+        `  Failed: ${errors.length}`,
+        `  Output directory: ${resolvedDir}`,
+        "",
+        "Exported files:",
+        ...exportedFiles.map((f) => `  ${f}`)
+      ];
+      if (errors.length > 0) {
+        summary.push("", "Errors:", ...errors.map((e) => `  ${e}`));
+      }
+      return {
+        content: [{ type: "text", text: summary.join("\n") }]
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Batch export error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true
       };
     }
   }
@@ -2291,7 +2685,7 @@ async function joinChannel(channelName) {
   }
 }
 function sendCommandToFigma(command, params = {}, timeoutMs = 3e4) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve2, reject) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       connectToFigma();
       reject(new Error("Not connected to Figma. Attempting to connect..."));
@@ -2325,7 +2719,7 @@ function sendCommandToFigma(command, params = {}, timeoutMs = 3e4) {
       }
     }, timeoutMs);
     pendingRequests.set(id, {
-      resolve,
+      resolve: resolve2,
       reject,
       timeout,
       lastActivity: Date.now()
