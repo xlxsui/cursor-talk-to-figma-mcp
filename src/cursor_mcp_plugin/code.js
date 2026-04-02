@@ -251,6 +251,10 @@ async function handleCommand(command, params) {
       return await setOpacity(params);
     case "reparent_node":
       return await reparentNode(params);
+    case "undo":
+      return await performUndo(params);
+    case "find_hidden_nodes":
+      return await findHiddenNodes(params);
     default:
       throw new Error(`Unknown command: ${command}`);
   }
@@ -2815,9 +2819,6 @@ async function scanNodesByTypes(params) {
  * @param {Array} matchingNodes - Array to store found nodes
  */
 async function findNodesByTypes(node, types, matchingNodes = []) {
-  // Skip invisible nodes
-  if (node.visible === false) return;
-
   // Check if this node is one of the specified types
   if (types.includes(node.type)) {
     // Create a minimal representation with just ID, type and bbox
@@ -2825,6 +2826,8 @@ async function findNodesByTypes(node, types, matchingNodes = []) {
       id: node.id,
       name: node.name || `Unnamed ${node.type}`,
       type: node.type,
+      visible: node.visible !== undefined ? node.visible : true,
+      opacity: "opacity" in node ? node.opacity : undefined,
       // Basic bounding box info
       bbox: {
         x: typeof node.x === "number" ? node.x : 0,
@@ -4353,5 +4356,53 @@ async function reparentNode(params) {
     newParentName: newParent.name,
     x: "x" in node ? node.x : undefined,
     y: "y" in node ? node.y : undefined,
+  };
+}
+
+async function performUndo(params) {
+  const { times = 1 } = params || {};
+  const count = Math.max(1, Math.min(times, 50));
+  for (let i = 0; i < count; i++) {
+    figma.triggerUndo();
+  }
+  return { success: true, undoCount: count };
+}
+
+async function findHiddenNodes(params) {
+  const { nodeId } = params || {};
+  let root;
+  if (nodeId) {
+    root = await figma.getNodeByIdAsync(nodeId);
+    if (!root) throw new Error(`Node not found with ID: ${nodeId}`);
+  } else {
+    root = figma.currentPage;
+  }
+
+  const hiddenNodes = [];
+
+  function traverse(node) {
+    if (node.visible === false) {
+      hiddenNodes.push({
+        id: node.id,
+        name: node.name,
+        type: node.type,
+        parentId: node.parent ? node.parent.id : null,
+        parentName: node.parent ? node.parent.name : null,
+      });
+    }
+    if ("children" in node) {
+      for (const child of node.children) {
+        traverse(child);
+      }
+    }
+  }
+
+  traverse(root);
+
+  return {
+    success: true,
+    count: hiddenNodes.length,
+    hiddenNodes,
+    searchRoot: { id: root.id, name: root.name },
   };
 }

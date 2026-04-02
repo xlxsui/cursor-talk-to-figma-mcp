@@ -940,6 +940,83 @@ server.tool(
   }
 );
 
+// Undo Tool
+server.tool(
+  "undo",
+  "Undo the last operation in Figma (supports undoing multiple steps)",
+  {
+    times: z.number().int().min(1).max(50).optional().describe("Number of undo steps (default: 1, max: 50)"),
+  },
+  async ({ times }: any) => {
+    try {
+      const result = await sendCommandToFigma("undo", { times: times || 1 });
+      const typedResult = result as { undoCount: number };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Undid ${typedResult.undoCount} operation(s)`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error undoing: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Find Hidden Nodes Tool
+server.tool(
+  "find_hidden_nodes",
+  "Find all hidden (invisible) nodes within a given node tree in Figma",
+  {
+    nodeId: z.string().optional().describe("The root node ID to search (default: current page)"),
+  },
+  async ({ nodeId }: any) => {
+    try {
+      const result = await sendCommandToFigma("find_hidden_nodes", { nodeId });
+      const typedResult = result as { count: number; hiddenNodes: Array<{ id: string; name: string; type: string; parentName: string }> };
+      if (typedResult.count === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "No hidden nodes found.",
+            },
+          ],
+        };
+      }
+      const nodeList = typedResult.hiddenNodes
+        .map((n: any) => `- ${n.name} (${n.type}, ID: ${n.id}, parent: ${n.parentName})`)
+        .join("\n");
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Found ${typedResult.count} hidden node(s):\n${nodeList}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error finding hidden nodes: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
 // Resize Node Tool
 server.tool(
   "resize_node",
@@ -3144,7 +3221,9 @@ type FigmaCommand =
   | "clone_to_parent"
   | "set_visibility"
   | "set_opacity"
-  | "reparent_node";
+  | "reparent_node"
+  | "undo"
+  | "find_hidden_nodes";
 
 type CommandParams = {
   get_document_info: Record<string, never>;
@@ -3326,6 +3405,12 @@ type CommandParams = {
     nodeId: string;
     newParentId: string;
     index?: number;
+  };
+  undo: {
+    times?: number;
+  };
+  find_hidden_nodes: {
+    nodeId?: string;
   };
 
 };
